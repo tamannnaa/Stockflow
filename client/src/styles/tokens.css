@@ -1,0 +1,149 @@
+/*
+ * stockflow design tokens — the single source of truth for colour and type.
+ * GENERATED from the brand palette; components consume these only via Tailwind
+ * classes (tailwind.config.js) or var(). Colours are stored as RGB channels so
+ * Tailwind opacity modifiers (bg-ink-900/40) work.
+ *
+ * Brand palette (exact):
+ *   Desert Sand #ECC8AF · Powder Blush #E7AD99 · Dusty Rose #CE796B
+ *   Toasted Almond #C18C5D · Blue Slate #495867
+ */
+:root {
+  /* Brand palette */
+  --desert-sand: 236 200 175;
+  --powder-blush: 231 173 153;
+  --dusty-rose: 206 121 107;
+  --toasted-almond: 193 140 93;
+  --blue-slate: 73 88 103;
+
+  /* Typography */
+  --font-heading: 'DM Serif Display', Georgia, 'Times New Roman', serif;
+  --font-body: 'Manrope', 'Segoe UI', system-ui, sans-serif;
+
+  /* ink */
+  --ink-50: 253 249 246; /* #fdf9f6 */
+  --ink-100: 247 240 234; /* #f7f0ea */
+  --ink-200: 237 226 216; /* #ede2d8 */
+  --ink-300: 220 205 192; /* #dccdc0 */
+  --ink-400: 165 157 151; /* #a59d97 */
+  --ink-500: 102 113 124; /* #66717c */
+  --ink-600: 86 100 114; /* #566472 */
+  --ink-700: 73 88 103; /* #495867 */
+  --ink-800: 59 71 84; /* #3b4754 */
+  --ink-900: 44 53 64; /* #2c3540 */
+  --ink-950: 29 35 43; /* #1d232b */
+  /* brand */
+  --brand-50: 252 244 242; /* #fcf4f2 */
+  --brand-100: 248 230 225; /* #f8e6e1 */
+  --brand-200: 241 205 195; /* #f1cdc3 */
+  --brand-300: 231 173 153; /* #e7ad99 */
+  --brand-400: 219 146 130; /* #db9282 */
+  --brand-500: 206 121 107; /* #ce796b */
+  --brand-600: 176 90 76; /* #b05a4c */
+  --brand-700: 151 74 62; /* #974a3e */
+  --brand-800: 123 61 51; /* #7b3d33 */
+  --brand-900: 99 51 44; /* #63332c */
+  --brand-950: 61 31 26; /* #3d1f1a */
+  /* sand */
+  --sand-50: 253 248 244; /* #fdf8f4 */
+  --sand-100: 249 238 229; /* #f9eee5 */
+  --sand-200: 243 223 208; /* #f3dfd0 */
+  --sand-300: 236 200 175; /* #ecc8af */
+  --sand-400: 224 176 143; /* #e0b08f */
+  --sand-500: 210 154 114; /* #d29a72 */
+  --sand-600: 181 125 85; /* #b57d55 */
+  --sand-700: 143 97 67; /* #8f6143 */
+  --sand-800: 110 75 53; /* #6e4b35 */
+  --sand-900: 85 58 41; /* #553a29 */
+  /* blush */
+  --blush-50: 253 246 243; /* #fdf6f3 */
+  --blush-100: 251 236 230; /* #fbece6 */
+  --blush-200: 244 212 200; /* #f4d4c8 */
+  --blush-300: 231 173 153; /* #e7ad99 */
+  --blush-400: 220 147 124; /* #dc937c */
+  --blush-500: 206 121 107; /* #ce796b */
+  --blush-600: 176 90 76; /* #b05a4c */
+  --blush-700: 151 74 62; /* #974a3e */
+  --blush-800: 123 61 51; /* #7b3d33 */
+  --blush-900: 99 51 44; /* #63332c */
+  /* almond */
+  --almond-50: 251 245 239; /* #fbf5ef */
+  --almond-100: 245 231 216; /* #f5e7d8 */
+  --almond-200: 233 207 179; /* #e9cfb3 */
+  --almond-300: 217 176 138; /* #d9b08a */
+  --almond-400: 201 155 114; /* #c99b72 */
+  --almond-500: 193 140 93; /* #c18c5d */
+  --almond-600: 160 112 69; /* #a07045 */
+  --almond-700: 127 88 54; /* #7f5836 */
+  --almond-800: 100 69 48; /* #644530 */
+  --almond-900: 79 55 39; /* #4f3727 */
+  /* success */
+  --success-50: 241 246 242; /* #f1f6f2 */
+  --success-100: 225 236 227; /* #e1ece3 */
+  --success-200: 195 216 199; /* #c3d8c7 */
+  --success-300: 157 191 164; /* #9dbfa4 */
+  --success-400: 118 162 129; /* #76a281 */
+  --success-500: 91 138 102; /* #5b8a66 */
+  --success-600: 74 116 84; /* #4a7454 */
+  --success-700: 61 95 69; /* #3d5f45 */
+  --success-800: 49 76 56; /* #314c38 */
+  --success-900: 39 61 45; /* #273d2d */
+  /* warning */
+  --warning-50: 252 246 238; /* #fcf6ee */
+  --warning-100: 247 232 212; /* #f7e8d4 */
+  --warning-200: 236 208 173; /* #ecd0ad */
+  --warning-300: 223 182 142; /* #dfb68e */
+  --warning-400: 208 159 114; /* #d09f72 */
+  --warning-500: 193 140 93; /* #c18c5d */
+  --warning-600: 163 112 63; /* #a3703f */
+  --warning-700: 134 90 51; /* #865a33 */
+  --warning-800: 108 72 43; /* #6c482b */
+  --warning-900: 87 59 37; /* #573b25 */
+  /* danger */
+  --danger-50: 252 242 240; /* #fcf2f0 */
+  --danger-100: 248 225 220; /* #f8e1dc */
+  --danger-200: 239 193 183; /* #efc1b7 */
+  --danger-300: 226 157 143; /* #e29d8f */
+  --danger-400: 212 123 106; /* #d47b6a */
+  --danger-500: 191 85 68; /* #bf5544 */
+  --danger-600: 166 68 58; /* #a6443a */
+  --danger-700: 138 55 47; /* #8a372f */
+  --danger-800: 112 45 39; /* #702d27 */
+  --danger-900: 91 38 33; /* #5b2621 */
+  /* info */
+  --info-50: 242 244 247; /* #f2f4f7 */
+  --info-100: 227 232 238; /* #e3e8ee */
+  --info-200: 200 209 219; /* #c8d1db */
+  --info-300: 163 177 193; /* #a3b1c1 */
+  --info-400: 132 149 168; /* #8495a8 */
+  --info-500: 107 127 149; /* #6b7f95 */
+  --info-600: 85 106 128; /* #556a80 */
+  --info-700: 73 88 103; /* #495867 */
+  --info-800: 59 71 84; /* #3b4754 */
+  --info-900: 44 53 64; /* #2c3540 */
+
+  /* Semantic tokens */
+  --color-primary: var(--brand-600);          /* Dusty Rose, accessible shade for filled buttons */
+  --color-primary-hover: var(--brand-700);
+  --color-accent: var(--dusty-rose);          /* indicators, focus, highlights */
+  --color-secondary: var(--toasted-almond);
+  --color-background: 250 245 241;            /* #faf5f1 — warm canvas from Desert Sand */
+  --color-surface: 255 253 251;               /* #fffdfb — cards, inputs, modals */
+  --color-surface-hover: var(--sand-50);
+  --color-surface-muted: var(--ink-50);
+  --color-text: var(--ink-900);
+  --color-text-muted: var(--ink-500);
+  --color-border: var(--ink-200);
+  --color-sidebar: var(--blue-slate);
+  --color-success: var(--success-600);
+  --color-warning: var(--warning-600);
+  --color-danger: var(--danger-600);
+
+  /* Charts (hex: SVG attributes can't resolve var()). Validated CVD-safe pair. */
+  --chart-sales: #2d5c94;      /* deepened Blue Slate */
+  --chart-purchases: #c8634c;  /* deepened Dusty Rose */
+  --chart-axis: #66717c;       /* ink-500 */
+  --chart-grid: #ede2d8;       /* ink-200 */
+  --chart-cursor: #dccdc0;     /* ink-300 */
+  --chart-surface: #fffdfb;
+}

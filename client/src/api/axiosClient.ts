@@ -15,6 +15,12 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Called when a silent refresh fails, so the app can drop the user back to /login.
+let onSessionExpired: (() => void) | null = null;
+export const setSessionExpiredHandler = (fn: (() => void) | null) => {
+  onSessionExpired = fn;
+};
+
 // On a 401, try one silent refresh, then retry the original request.
 let refreshing: Promise<string> | null = null;
 api.interceptors.response.use(
@@ -37,6 +43,7 @@ api.interceptors.response.use(
       } catch (e) {
         refreshing = null;
         setAccessToken(null);
+        onSessionExpired?.();
         return Promise.reject(e);
       }
     }

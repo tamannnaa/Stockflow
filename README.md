@@ -1,4 +1,4 @@
-# StockFlow — Inventory & Order Management System
+# stockflow — Inventory & Order Management System
 
 A production-style full-stack application for small retailers and warehouses to manage products, suppliers, stock, and sales/purchase orders — with role-based access, a KPI dashboard, low-stock alerts, and a full audit trail of every stock movement.
 
@@ -105,6 +105,8 @@ Prisma manages the schema and migrations. After editing `prisma/schema.prisma`:
 npm run prisma:migrate     # dev: create + apply a migration
 npm run prisma:deploy      # prod: apply existing migrations
 ```
+**Customers migration (`20261117120731_add_customers`)** is additive and safe on existing data: it creates `customers`, adds a nullable `orders.customer_id` (`ON DELETE RESTRICT`), creates one customer per distinct sales-order `customer_name` (trimmed, case-insensitive; most-used spelling wins; "customer since" = first order) and links those orders, including cancelled ones. Walk-in sales and purchase orders stay unlinked, and `customer_name` is kept as a historical snapshot. Apply it with `npm run prisma:deploy` (never resets data). Back up first: `docker exec stockflow-db pg_dump -U stockflow -d stockflow > backup.sql`.
+
 Key design choices: money stored as `DECIMAL` (not float); `CHECK` constraints keep stock/price non-negative; `stock_movements` is an append-only ledger so stock history is always auditable; indexes on `products(category_id)`, `products(quantity_in_stock)`, `orders(status)`, and `order_items(order_id)`.
 
 ## API documentation
@@ -127,7 +129,26 @@ Base URL: `/api/v1`. Protected routes require `Authorization: Bearer <accessToke
 | GET | `/dashboard/summary` | Auth | KPIs (raw SQL) |
 | GET/POST | `/categories`, `/suppliers` | Auth / MANAGER+ | Reference data |
 | GET/PATCH | `/users` | ADMIN | User & role management |
-| GET | `/notifications` | Auth | Low-stock & system notifications |
+| GET | `/notifications` | Auth | Low-stock & system notifications (+ `unread` count) |
+| PATCH | `/notifications/read-all`, `/notifications/:id/read` | Auth | Mark notifications read |
+| GET | `/products?stock=in\|low\|out&supplierId=` | Auth | Extra product filters |
+| POST | `/products/:id/adjust` | MANAGER+ | Manual stock adjustment `{ changeQty, reason, note }` (never below zero) |
+| GET | `/products/:id/movements` | Auth | Stock history for one product |
+| GET | `/stock-movements?reason=&search=` | Auth | Read-only stock ledger |
+| GET/PATCH | `/suppliers/:id` | Auth / MANAGER+ | Supplier detail (products, recent POs) / update |
+| PATCH | `/categories/:id` | MANAGER+ | Rename / describe a category |
+| POST | `/users` | ADMIN | Create a team member with a role |
+| GET | `/activity?entity=` | MANAGER+ | Audit log |
+| GET | `/customers?search=&status=active\|archived\|all&sort=name\|createdAt\|orders\|totalSpent\|lastOrderAt&order=&page=&limit=` | Auth | Customers with stats (orders, spend, avg order, last/first order, units) + walk-in summary |
+| GET | `/customers/:id` | Auth | Customer details, stats and order history (incl. cancelled) |
+| POST | `/customers` | Auth | Create customer `{ name, companyName?, email?, phone?, address?, gstin? }` (409 on duplicate email/GSTIN/name+company) |
+| PUT | `/customers/:id` | Auth | Replace customer details (omitted optional fields are cleared). Past orders keep their name snapshot |
+| POST | `/customers/:id/archive`, `/customers/:id/restore` | MANAGER+ | Archive (hide, block new sales, keep history) / restore |
+| DELETE | `/customers/:id` | MANAGER+ | Delete — only when the customer has no orders (409 `CUSTOMER_HAS_ORDERS` otherwise) |
+
+Sales orders accept `customerId` (preferred). `customerName` alone is still accepted for backward compatibility: it links to the matching active customer, or creates one. Purchase orders can't have a customer (400, and a database CHECK constraint).
+
+Purchase orders (`type: "PURCHASE"`) require MANAGER or ADMIN, because they add stock.
 
 **Example — create a sale**
 ```http
@@ -153,7 +174,15 @@ Authorization: Bearer <token>
 ```bash
 cd server && npm test
 ```
-Vitest + Supertest cover the HTTP layer (routing, validation, auth guards) and the Zod schemas without needing a database. For full integration tests against Postgres, point `DATABASE_URL` at a disposable test database and run the order/stock scenarios (create sale → stock decrements; insufficient stock → 409; cancel → stock restored).
+Vitest + Supertest cover the HTTP layer (routing, validation, auth guards) and the Zod schemas without needing a database.
+
+**Integration tests** (`src/tests/*.int.test.ts`) run the real workflows against a disposable Postgres database. They truncate every table, so the database name must contain "test":
+```bash
+docker exec stockflow-db createdb -U stockflow stockflow_test
+DATABASE_URL=postgresql://stockflow:stockflow@localhost:5432/stockflow_test npx prisma migrate deploy
+TEST_DATABASE_URL=postgresql://stockflow:stockflow@localhost:5432/stockflow_test npm run test:integration
+```
+They cover: concurrent sales never overselling, exact decimal totals, duplicate-line rejection, cancel/return stock reversal, purchase-cancel protection, ledger and audit writes, low-stock alerts firing once, RBAC, and dashboard figures matching the orders.
 
 ## Deployment
 Recommended free-tier setup:

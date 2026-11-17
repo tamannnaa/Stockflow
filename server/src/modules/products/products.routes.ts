@@ -1,6 +1,12 @@
 import { Router } from 'express';
 import { productsController } from './products.controller';
-import { createProductSchema, listProductsQuery, updateProductSchema } from './products.schema';
+import {
+  adjustStockSchema,
+  createProductSchema,
+  listProductsQuery,
+  paginationQuery,
+  updateProductSchema,
+} from './products.schema';
 import { authenticate } from '../../middleware/auth';
 import { authorize } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
@@ -13,10 +19,12 @@ router.use(authenticate); // all product routes require login
 router.get('/', validate(listProductsQuery, 'query'), asyncHandler(productsController.list));
 router.get('/low-stock', asyncHandler(productsController.lowStock));
 router.get('/:id', asyncHandler(productsController.getOne));
+router.get('/:id/movements', validate(paginationQuery, 'query'), asyncHandler(productsController.movements));
 
 // Mutations require MANAGER or ADMIN.
 router.post('/', authorize('ADMIN', 'MANAGER'), validate(createProductSchema), asyncHandler(productsController.create));
 router.patch('/:id', authorize('ADMIN', 'MANAGER'), validate(updateProductSchema), asyncHandler(productsController.update));
 router.delete('/:id', authorize('ADMIN', 'MANAGER'), asyncHandler(productsController.remove));
+router.post('/:id/adjust', authorize('ADMIN', 'MANAGER'), validate(adjustStockSchema), asyncHandler(productsController.adjust));
 
 export default router;

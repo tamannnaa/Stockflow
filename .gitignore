@@ -24,3 +24,6 @@ server/prisma/*.db
 
 # TS build info
 *.tsbuildinfo
+
+# local database backups
+db-backups/

@@ -1,172 +1,280 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Archive, Download, Eye, Package, Pencil, Plus, SlidersHorizontal } from 'lucide-react';
 import { productsApi } from '../api/resources';
 import { useAuth } from '../auth/AuthContext';
-import type { Pagination, Product } from '../types';
+import { useAsync } from '../hooks/useAsync';
+import { useDebounce } from '../hooks/useDebounce';
+import { useReferenceData } from '../hooks/useReferenceData';
+import { useUrlState } from '../hooks/useUrlState';
+import { canManageInventory } from '../lib/permissions';
+import { getErrorMessage } from '../lib/errors';
+import { count, money } from '../lib/format';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Card } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
+import { Column, DataTable } from '../components/ui/DataTable';
+import { Pagination } from '../components/ui/Pagination';
+import { FilterSelect, SearchInput, Segmented, Toolbar } from '../components/ui/Toolbar';
+import { EmptyState } from '../components/ui/States';
+import { RowMenu } from '../components/ui/Menu';
+import { ConfirmDialog } from '../components/ui/Overlay';
+import { useToast } from '../components/ui/Toast';
+import { StockBadge, StockLevel } from '../components/domain/Badges';
+import { ProductFormModal } from '../features/products/ProductFormModal';
+import { AdjustStockModal } from '../features/products/AdjustStockModal';
+import { ProductDrawer } from '../features/products/ProductDrawer';
+import type { Product, StockFilter } from '../types';
+
+const PAGE_SIZE = 15;
 
 export default function ProductsPage() {
   const { user } = useAuth();
-  const canManage = user?.role === 'ADMIN' || user?.role === 'MANAGER';
+  const canManage = canManageInventory(user?.role);
+  const toast = useToast();
+  const { categories, suppliers, reload: reloadRefs } = useReferenceData();
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [pagination, setPagination] = useState<Pagination | null>(null);
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
+  const [f, setF] = useUrlState({ q: '', stock: '', category: '', supplier: '', sort: 'name', order: 'asc', page: '1' });
+  const [searchText, setSearchText] = useState(f.q);
+  const debounced = useDebounce(searchText, 300);
+  useEffect(() => {
+    if (debounced !== f.q) setF({ q: debounced });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounced]);
 
-  const load = () => {
-    setLoading(true);
-    productsApi
-      .list({ search, page, limit: 10, sort: 'name', order: 'asc' })
-      .then((r) => {
-        setProducts(r.data.data);
-        setPagination(r.data.pagination);
-      })
-      .catch(() => setError('Failed to load products'))
-      .finally(() => setLoading(false));
+  const page = Number(f.page) || 1;
+  const { data, loading, error, reload } = useAsync(
+    () =>
+      productsApi
+        .list({ search: f.q, stock: f.stock, categoryId: f.category, supplierId: f.supplier, sort: f.sort, order: f.order, page, limit: PAGE_SIZE })
+        .then((r) => r.data),
+    [f.q, f.stock, f.category, f.supplier, f.sort, f.order, page],
+  );
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Product | null>(null);
+  const [adjusting, setAdjusting] = useState<Product | null>(null);
+  const [archiving, setArchiving] = useState<Product | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [viewing, setViewing] = useState<Product | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
+
+  const openCreate = () => {
+    setEditing(null);
+    setFormOpen(true);
+  };
+  const openEdit = (p: Product) => {
+    setEditing(p);
+    setFormOpen(true);
   };
 
-  // Debounced reload on search/page change.
-  useEffect(() => {
-    const t = setTimeout(load, 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, page]);
+  const afterSave = (p: Product) => {
+    reload();
+    if (viewing?.id === p.id) setViewing({ ...viewing, ...p });
+    setHistoryVersion((v) => v + 1);
+  };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Products</h1>
-        {canManage && (
-          <button
-            onClick={() => setShowForm((s) => !s)}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-md px-3 py-1.5"
-          >
-            {showForm ? 'Close' : '+ New product'}
-          </button>
-        )}
-      </div>
-
-      {showForm && canManage && <NewProductForm onCreated={() => { setShowForm(false); load(); }} />}
-
-      <input
-        value={search}
-        onChange={(e) => {
-          setPage(1);
-          setSearch(e.target.value);
-        }}
-        placeholder="Search by name or SKU…"
-        className="w-full max-w-sm border rounded-md px-3 py-2 text-sm"
-      />
-
-      {loading ? (
-        <p className="text-slate-500">Loading…</p>
-      ) : error ? (
-        <p className="text-red-600">{error}</p>
-      ) : products.length === 0 ? (
-        <p className="text-slate-400 text-sm">No products found.</p>
-      ) : (
-        <div className="bg-white rounded-xl border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-500">
-              <tr>
-                <th className="px-3 py-2">SKU</th>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Category</th>
-                <th className="px-3 py-2 text-right">Price</th>
-                <th className="px-3 py-2 text-right">Stock</th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((p) => (
-                <tr key={p.id} className="border-t">
-                  <td className="px-3 py-2 font-mono text-xs">{p.sku}</td>
-                  <td className="px-3 py-2">{p.name}</td>
-                  <td className="px-3 py-2 text-slate-500">{p.category?.name ?? '—'}</td>
-                  <td className="px-3 py-2 text-right">₹{Number(p.unitPrice).toLocaleString('en-IN')}</td>
-                  <td className="px-3 py-2 text-right">
-                    <span className={p.quantityInStock <= p.reorderLevel ? 'text-red-600 font-medium' : ''}>
-                      {p.quantityInStock}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {pagination && pagination.totalPages > 1 && (
-        <div className="flex items-center gap-2 text-sm">
-          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="px-2 py-1 border rounded disabled:opacity-40">
-            Prev
-          </button>
-          <span className="text-slate-500">
-            Page {pagination.page} of {pagination.totalPages}
-          </span>
-          <button
-            disabled={page >= pagination.totalPages}
-            onClick={() => setPage((p) => p + 1)}
-            className="px-2 py-1 border rounded disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function NewProductForm({ onCreated }: { onCreated: () => void }) {
-  const [form, setForm] = useState({ sku: '', name: '', unitPrice: '', costPrice: '', quantityInStock: '' });
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSaving(true);
+  const confirmArchive = async () => {
+    if (!archiving) return;
+    setArchiveBusy(true);
     try {
-      await productsApi.create({
-        sku: form.sku,
-        name: form.name,
-        unitPrice: Number(form.unitPrice),
-        costPrice: Number(form.costPrice),
-        quantityInStock: Number(form.quantityInStock || 0),
-      });
-      onCreated();
-    } catch {
-      setError('Could not create product (SKU may already exist).');
+      await productsApi.archive(archiving.id);
+      toast.success('Product archived', `${archiving.name} is hidden from the catalogue. Order history is kept.`);
+      if (viewing?.id === archiving.id) setViewing(null);
+      setArchiving(null);
+      reload();
+    } catch (err) {
+      toast.error('Could not archive product', getErrorMessage(err));
     } finally {
-      setSaving(false);
+      setArchiveBusy(false);
     }
   };
 
-  const field = (key: keyof typeof form, label: string, type = 'text') => (
-    <div>
-      <label className="text-xs text-slate-500">{label}</label>
-      <input
-        type={type}
-        value={form[key]}
-        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-        className="mt-1 w-full border rounded-md px-2 py-1.5 text-sm"
-        required={key !== 'quantityInStock'}
-      />
-    </div>
-  );
+  const exportCsv = () => {
+    if (!data?.data.length) return;
+    const head = ['SKU', 'Name', 'Category', 'Supplier', 'Unit price', 'Cost price', 'On hand', 'Reorder level'];
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = data.data.map((p) =>
+      [p.sku, p.name, p.category?.name, p.supplier?.name, p.unitPrice, p.costPrice, p.quantityInStock, p.reorderLevel].map(esc).join(','),
+    );
+    const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `products-page-${page}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const columns: Column<Product>[] = [
+    {
+      key: 'name',
+      header: 'Product',
+      sortable: true,
+      cell: (p) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium text-ink-900">{p.name}</p>
+          <p className="mt-0.5 font-mono text-xs text-ink-500">{p.sku}</p>
+        </div>
+      ),
+    },
+    { key: 'category', header: 'Category', hideBelow: 'md', cell: (p) => <span className="text-ink-600">{p.category?.name ?? '—'}</span> },
+    { key: 'supplier', header: 'Supplier', hideBelow: 'lg', cell: (p) => <span className="text-ink-600">{p.supplier?.name ?? '—'}</span> },
+    { key: 'unitPrice', header: 'Price', sortable: true, align: 'right', hideBelow: 'sm', cell: (p) => <span className="tabular">{money(p.unitPrice)}</span> },
+    {
+      key: 'quantityInStock',
+      header: 'On hand',
+      sortable: true,
+      align: 'right',
+      cell: (p) => <StockLevel qty={p.quantityInStock} reorder={p.reorderLevel} />,
+    },
+    { key: 'status', header: 'Status', hideBelow: 'sm', cell: (p) => <StockBadge qty={p.quantityInStock} reorder={p.reorderLevel} /> },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right',
+      width: '56px',
+      cell: (p) => (
+        <RowMenu
+          items={[
+            { label: 'View details', icon: <Eye />, onSelect: () => setViewing(p) },
+            ...(canManage
+              ? [
+                  { label: 'Edit', icon: <Pencil />, onSelect: () => openEdit(p) },
+                  { label: 'Adjust stock', icon: <SlidersHorizontal />, onSelect: () => setAdjusting(p) },
+                  { label: 'Archive', icon: <Archive />, danger: true, onSelect: () => setArchiving(p) },
+                ]
+              : []),
+          ]}
+        />
+      ),
+    },
+  ];
+
+  const filtersActive = !!(f.q || f.stock || f.category || f.supplier);
 
   return (
-    <form onSubmit={submit} className="bg-white border rounded-xl p-4 grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
-      {field('sku', 'SKU')}
-      {field('name', 'Name')}
-      {field('unitPrice', 'Unit price', 'number')}
-      {field('costPrice', 'Cost price', 'number')}
-      {field('quantityInStock', 'Stock', 'number')}
-      {error && <p className="col-span-full text-sm text-red-600">{error}</p>}
-      <button disabled={saving} className="col-span-full md:col-span-1 bg-indigo-600 text-white text-sm rounded-md py-1.5">
-        {saving ? 'Saving…' : 'Save'}
-      </button>
-    </form>
+    <div className="space-y-5">
+      <PageHeader
+        title="Products"
+        description={data ? `${count(data.pagination.total)} ${filtersActive ? 'matching' : 'active'} products` : 'Your catalogue and stock levels'}
+        actions={
+          <>
+            <Button variant="secondary" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={exportCsv} disabled={!data?.data.length}>
+              Export CSV
+            </Button>
+            {canManage && (
+              <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={openCreate}>
+                New product
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <Card>
+        <Toolbar>
+          <SearchInput value={searchText} onChange={setSearchText} placeholder="Search name or SKU" />
+          <Segmented<'' | StockFilter>
+            label="Stock status"
+            value={f.stock as '' | StockFilter}
+            onChange={(v) => setF({ stock: v })}
+            options={[
+              { value: '', label: 'All' },
+              { value: 'in', label: 'In stock' },
+              { value: 'low', label: 'Low' },
+              { value: 'out', label: 'Out' },
+            ]}
+          />
+          <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:justify-end">
+            <FilterSelect
+              label="Category"
+              value={f.category}
+              onChange={(v) => setF({ category: v })}
+              options={categories.map((c) => ({ value: String(c.id), label: c.name }))}
+            />
+            <FilterSelect
+              label="Supplier"
+              value={f.supplier}
+              onChange={(v) => setF({ supplier: v })}
+              options={suppliers.map((s) => ({ value: String(s.id), label: s.name }))}
+            />
+          </div>
+        </Toolbar>
+        <DataTable
+          columns={columns}
+          rows={data?.data}
+          rowKey={(p) => p.id}
+          loading={loading}
+          error={error}
+          onRetry={reload}
+          onRowClick={setViewing}
+          sort={{ key: f.sort, order: f.order as 'asc' | 'desc' }}
+          onSortChange={(s) => setF({ sort: s.key, order: s.order })}
+          empty={
+            filtersActive ? (
+              <EmptyState
+                icon={<Package className="h-5 w-5" />}
+                title="No products match these filters"
+                description="Try a different search term or clear the filters."
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSearchText('');
+                      setF({ q: '', stock: '', category: '', supplier: '' });
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={<Package className="h-5 w-5" />}
+                title="No products yet"
+                description="Add your first product to start tracking stock."
+                action={canManage && <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={openCreate}>New product</Button>}
+              />
+            )
+          }
+        />
+        <Pagination pagination={data?.pagination} onPage={(p) => setF({ page: String(p) }, { resetPage: false })} />
+      </Card>
+
+      <ProductFormModal
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        product={editing}
+        categories={categories}
+        suppliers={suppliers}
+        onSaved={(p) => {
+          afterSave(p);
+          reloadRefs();
+        }}
+      />
+      <AdjustStockModal product={adjusting} onClose={() => setAdjusting(null)} onSaved={afterSave} />
+      <ConfirmDialog
+        open={!!archiving}
+        onClose={() => setArchiving(null)}
+        onConfirm={confirmArchive}
+        loading={archiveBusy}
+        title="Archive product?"
+        confirmLabel="Archive product"
+        message={
+          <>
+            <strong className="text-ink-900">{archiving?.name}</strong> will be removed from the catalogue and can no longer be ordered.
+            Its stock history and past orders are kept.
+          </>
+        }
+      />
+      <ProductDrawer
+        product={viewing}
+        canManage={canManage}
+        onClose={() => setViewing(null)}
+        onEdit={openEdit}
+        onAdjust={setAdjusting}
+        version={historyVersion}
+      />
+    </div>
   );
 }

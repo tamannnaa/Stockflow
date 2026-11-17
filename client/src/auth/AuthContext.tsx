@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { setAccessToken } from '../api/axiosClient';
+import { setAccessToken, setSessionExpiredHandler } from '../api/axiosClient';
 import { authApi } from '../api/resources';
 import type { User } from '../types';
 
@@ -27,6 +27,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
+  }, []);
+
+  // If a background refresh fails (expired cookie, deactivated user), sign out
+  // so ProtectedRoute redirects to /login instead of leaving a broken page.
+  useEffect(() => {
+    setSessionExpiredHandler(() => setUser(null));
+    return () => setSessionExpiredHandler(null);
   }, []);
 
   const login = async (email: string, password: string) => {

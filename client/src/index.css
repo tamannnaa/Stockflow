@@ -1,7 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+@import './styles/tokens.css';@import './styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-slate-50 text-slate-800 antialiased;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-canvas font-sans text-ink-900 antialiased;
+    font-size: 15px;
+  }
+  /* Manrope and DM Serif Display ship a single regular weight; headings stay regular. */
+  h1,
+  h2,
+  h3 {
+    font-weight: 400;
+  }
+  ::selection {
+    background: rgb(var(--powder-blush) / 0.55);
+    color: rgb(var(--ink-950));
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500/70 ring-offset-1 ring-offset-canvas;
+  }
+}
+
+@layer components {
+  /* Form controls share one look so every form in the app is consistent. */
+  .control {
+    @apply block w-full rounded-lg border border-ink-300 bg-surface px-3 py-2 text-sm text-ink-900 shadow-sm
+      placeholder:text-ink-400 transition-colors
+      hover:border-ink-400
+      focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25
+      disabled:cursor-not-allowed disabled:bg-ink-50 disabled:text-ink-500;
+  }
+  select.control {
+    accent-color: rgb(var(--dusty-rose));
+  }
+  .control-invalid {
+    @apply border-danger-400 focus:border-danger-500 focus:ring-danger-500/20;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Native checkboxes/radios/ranges pick up the brand accent. */
+input[type='checkbox'],
+input[type='radio'],
+input[type='range'],
+progress {
+  accent-color: rgb(var(--dusty-rose));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }

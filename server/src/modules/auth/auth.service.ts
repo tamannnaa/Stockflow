@@ -4,6 +4,7 @@ import type { User, UserRole } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { env } from '../../config/env';
 import { HttpError } from '../../utils/httpError';
+import { logActivity } from '../../utils/activity';
 import type { AuthPayload } from '../../middleware/auth';
 import type { LoginInput, RegisterInput } from './auth.schema';
 
@@ -50,6 +51,7 @@ export const authService = {
     const ok = user ? await bcrypt.compare(input.password, user.passwordHash) : false;
     if (!user || !ok) throw HttpError.unauthorized('Invalid email or password');
     if (!user.isActive) throw HttpError.forbidden('Account is deactivated');
+    await logActivity(prisma, { userId: user.id, action: 'auth.login', entity: 'auth', entityId: user.id });
     return this.issueTokens(user);
   },
 

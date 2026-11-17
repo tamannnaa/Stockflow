@@ -1,6 +1,8 @@
 import { Prisma, OrderStatus } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { HttpError } from '../../utils/httpError';
+import { logActivity } from '../../utils/activity';
+import { notifyIfCrossedReorder } from '../../utils/stockAlerts';
 import type { CreateOrderInput, ListOrdersQuery } from './orders.schema';
 
 // Allowed status transitions — prevents e.g. reviving a cancelled order.
@@ -11,18 +13,87 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   CANCELLED: [],
 };
 
+const ORDER_NUMBER_RETRIES = 3;
+
+function isOrderNumberClash(err: unknown) {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === 'P2002' &&
+    String(err.meta?.target ?? '').includes('order_number')
+  );
+}
+
 export const ordersService = {
   /**
    * Creates an order and adjusts stock ATOMICALLY.
    *
    * A SALE decrements stock; a PURCHASE increments it. All writes — order,
-   * order_items, product quantity updates, and the stock_movement ledger rows —
-   * happen inside a single transaction. If any product has insufficient stock,
-   * the whole transaction rolls back and nothing changes. This guarantees the
-   * database can never end up with a "half-applied" order or negative stock.
+   * order_items, product quantity updates, ledger rows, notifications and the
+   * audit entry — happen inside a single transaction. Sale decrements are
+   * conditional (`quantity >= n`), so two concurrent sales can never push stock
+   * below zero: the loser's update matches 0 rows and the transaction rolls back.
    */
   async create(userId: number, input: CreateOrderInput) {
+    // Order numbers are sequential per type; a concurrent insert can clash on the
+    // unique index, in which case we simply retry with the next number.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.createOnce(userId, input);
+      } catch (err) {
+        if (!isOrderNumberClash(err) || attempt >= ORDER_NUMBER_RETRIES) throw err;
+      }
+    }
+  },
+
+  /**
+   * Works out which customer a SALE belongs to and the name snapshot to store.
+   *  - customerId given → must exist and be active; snapshot = customer's current name.
+   *  - only customerName given (legacy clients) → link to the single active customer
+   *    with that name, or create one in the same transaction.
+   *  - neither → walk-in sale (no customer).
+   * PURCHASE orders never get a customer (also enforced by a DB check constraint).
+   */
+  async resolveCustomer(tx: Prisma.TransactionClient, input: CreateOrderInput, userId: number) {
+    if (input.type !== 'SALE') return { customerId: undefined, customerName: input.customerName || undefined };
+
+    if (input.customerId) {
+      const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
+      if (!customer) throw HttpError.badRequest('Customer not found');
+      if (!customer.isActive) throw HttpError.badRequest(`${customer.name} is archived. Restore the customer to record new sales.`);
+      return { customerId: customer.id, customerName: customer.name };
+    }
+
+    const name = input.customerName?.trim();
+    if (!name) return { customerId: undefined, customerName: undefined };
+
+    const matches = await tx.customer.findMany({ where: { name: { equals: name, mode: 'insensitive' } } });
+    const active = matches.filter((c) => c.isActive);
+    if (active.length === 1) return { customerId: active[0]!.id, customerName: active[0]!.name };
+    if (active.length > 1) {
+      throw HttpError.badRequest(`More than one customer is named "${name}". Choose the customer from the list.`);
+    }
+    if (matches.length > 0) {
+      throw HttpError.badRequest(`${matches[0]!.name} is archived. Restore the customer to record new sales.`);
+    }
+    const created = await tx.customer.create({ data: { name } });
+    await logActivity(tx, {
+      userId,
+      action: 'customer.created',
+      entity: 'customer',
+      entityId: created.id,
+      metadata: { name: created.name, source: 'sales order' },
+    });
+    return { customerId: created.id, customerName: created.name };
+  },
+
+  async createOnce(userId: number, input: CreateOrderInput) {
     return prisma.$transaction(async (tx) => {
+      if (input.supplierId) {
+        const supplier = await tx.supplier.findUnique({ where: { id: input.supplierId } });
+        if (!supplier) throw HttpError.badRequest('Supplier not found');
+      }
+      const customer = await this.resolveCustomer(tx, input, userId);
+
       const productIds = input.items.map((i) => i.productId);
       const products = await tx.product.findMany({ where: { id: { in: productIds } } });
       const byId = new Map(products.map((p) => [p.id, p]));
@@ -42,11 +113,13 @@ export const ordersService = {
         }
       }
 
-      const totalAmount = input.items.reduce((sum, item) => {
+      // Decimal arithmetic end to end — no float rounding on money.
+      const lines = input.items.map((item) => {
         const product = byId.get(item.productId)!;
-        const price = input.type === 'SALE' ? product.unitPrice : product.costPrice;
-        return sum + Number(price) * item.quantity;
-      }, 0);
+        const unitPrice = input.type === 'SALE' ? product.unitPrice : product.costPrice;
+        return { productId: item.productId, quantity: item.quantity, unitPrice, lineTotal: unitPrice.mul(item.quantity) };
+      });
+      const totalAmount = lines.reduce((sum, l) => sum.add(l.lineTotal), new Prisma.Decimal(0));
 
       const order = await tx.order.create({
         data: {
@@ -54,57 +127,55 @@ export const ordersService = {
           type: input.type,
           status: 'CONFIRMED',
           supplierId: input.supplierId,
-          customerName: input.customerName,
+          customerId: customer.customerId,
+          customerName: customer.customerName,
           totalAmount,
           createdById: userId,
-          items: {
-            create: input.items.map((item) => {
-              const product = byId.get(item.productId)!;
-              const price = input.type === 'SALE' ? product.unitPrice : product.costPrice;
-              return {
-                productId: item.productId,
-                quantity: item.quantity,
-                unitPrice: price,
-                lineTotal: Number(price) * item.quantity,
-              };
-            }),
-          },
+          items: { create: lines },
         },
         include: { items: true },
       });
 
       // Apply stock changes + write the immutable ledger row for each item.
       for (const item of input.items) {
-        const delta = input.type === 'SALE' ? -item.quantity : item.quantity;
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { quantityInStock: { increment: delta } },
-        });
+        const before = byId.get(item.productId)!;
+        if (input.type === 'SALE') {
+          const res = await tx.product.updateMany({
+            where: { id: item.productId, quantityInStock: { gte: item.quantity } },
+            data: { quantityInStock: { decrement: item.quantity } },
+          });
+          if (res.count === 0) {
+            // Stock changed between our read and this write (concurrent sale).
+            throw HttpError.conflict('INSUFFICIENT_STOCK', `Not enough stock for "${before.name}"`, {
+              productId: before.id,
+              requested: item.quantity,
+            });
+          }
+        } else {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { quantityInStock: { increment: item.quantity } },
+          });
+        }
         await tx.stockMovement.create({
           data: {
             productId: item.productId,
-            changeQty: delta,
+            changeQty: input.type === 'SALE' ? -item.quantity : item.quantity,
             reason: input.type,
             referenceOrderId: order.id,
             createdById: userId,
           },
         });
+        if (input.type === 'SALE') await notifyIfCrossedReorder(tx, item.productId, before.quantityInStock);
       }
 
-      // Low-stock notifications (checked after decrement).
-      if (input.type === 'SALE') {
-        for (const item of input.items) {
-          const product = await tx.product.findUnique({ where: { id: item.productId } });
-          if (product && product.quantityInStock <= product.reorderLevel) {
-            await tx.notification.create({
-              data: {
-                type: 'LOW_STOCK',
-                message: `"${product.name}" is low on stock (${product.quantityInStock} left)`,
-              },
-            });
-          }
-        }
-      }
+      await logActivity(tx, {
+        userId,
+        action: 'order.created',
+        entity: 'order',
+        entityId: order.id,
+        metadata: { orderNumber: order.orderNumber, type: order.type, totalAmount: totalAmount.toString() },
+      });
 
       return order;
     });
@@ -120,6 +191,16 @@ export const ordersService = {
     const where: Prisma.OrderWhereInput = {
       ...(q.type ? { type: q.type } : {}),
       ...(q.status ? { status: q.status } : {}),
+      ...(q.customerId ? { customerId: q.customerId } : {}),
+      ...(q.search
+        ? {
+            OR: [
+              { orderNumber: { contains: q.search, mode: 'insensitive' } },
+              { customerName: { contains: q.search, mode: 'insensitive' } },
+              { supplier: { name: { contains: q.search, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
     };
     const [total, data] = await Promise.all([
       prisma.order.count({ where }),
@@ -128,7 +209,12 @@ export const ordersService = {
         orderBy: { createdAt: 'desc' },
         skip: (q.page - 1) * q.limit,
         take: q.limit,
-        include: { createdBy: { select: { id: true, name: true } }, _count: { select: { items: true } } },
+        include: {
+          createdBy: { select: { id: true, name: true } },
+          supplier: { select: { id: true, name: true } },
+          customer: { select: { id: true, name: true } },
+          _count: { select: { items: true } },
+        },
       }),
     ]);
     return {
@@ -140,19 +226,27 @@ export const ordersService = {
   async getById(id: number) {
     const order = await prisma.order.findUnique({
       where: { id },
-      include: { items: { include: { product: true } }, createdBy: { select: { id: true, name: true } }, supplier: true },
+      include: {
+        items: { include: { product: { select: { id: true, sku: true, name: true } } } },
+        createdBy: { select: { id: true, name: true } },
+        supplier: true,
+        customer: { select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true } },
+        movements: { orderBy: { createdAt: 'asc' }, include: { createdBy: { select: { id: true, name: true } } } },
+      },
     });
     if (!order) throw HttpError.notFound('Order not found');
     return order;
   },
 
   /**
-   * Updates status with transition validation. Cancelling a non-fulfilled order
-   * restores stock (reverses the movements) — again inside a transaction.
+   * Updates status with transition validation. Cancelling restores stock
+   * (reverses the movements) — again inside a transaction. Cancelling a
+   * PURCHASE whose stock has already been sold is rejected instead of driving
+   * stock negative.
    */
   async updateStatus(id: number, next: OrderStatus, userId: number) {
     return prisma.$transaction(async (tx) => {
-      const order = await tx.order.findUnique({ where: { id }, include: { items: true } });
+      const order = await tx.order.findUnique({ where: { id }, include: { items: { include: { product: true } } } });
       if (!order) throw HttpError.notFound('Order not found');
 
       if (!TRANSITIONS[order.status].includes(next)) {
@@ -160,26 +254,48 @@ export const ordersService = {
       }
 
       if (next === 'CANCELLED') {
-        // Reverse the original stock effect.
         for (const item of order.items) {
-          const restore = order.type === 'SALE' ? item.quantity : -item.quantity;
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { quantityInStock: { increment: restore } },
-          });
+          if (order.type === 'SALE') {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { quantityInStock: { increment: item.quantity } },
+            });
+          } else {
+            const res = await tx.product.updateMany({
+              where: { id: item.productId, quantityInStock: { gte: item.quantity } },
+              data: { quantityInStock: { decrement: item.quantity } },
+            });
+            if (res.count === 0) {
+              throw HttpError.conflict(
+                'STOCK_ALREADY_USED',
+                `Cannot cancel: units of "${item.product.name}" from this purchase have already been sold`,
+              );
+            }
+          }
           await tx.stockMovement.create({
             data: {
               productId: item.productId,
-              changeQty: restore,
+              changeQty: order.type === 'SALE' ? item.quantity : -item.quantity,
               reason: order.type === 'SALE' ? 'RETURN' : 'ADJUSTMENT',
               referenceOrderId: order.id,
               createdById: userId,
             },
           });
+          if (order.type === 'PURCHASE') {
+            await notifyIfCrossedReorder(tx, item.productId, item.product.quantityInStock);
+          }
         }
       }
 
-      return tx.order.update({ where: { id }, data: { status: next } });
+      const updated = await tx.order.update({ where: { id }, data: { status: next } });
+      await logActivity(tx, {
+        userId,
+        action: 'order.status_changed',
+        entity: 'order',
+        entityId: id,
+        metadata: { orderNumber: order.orderNumber, from: order.status, to: next },
+      });
+      return updated;
     });
   },
 };
