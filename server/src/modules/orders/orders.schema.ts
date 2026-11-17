@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 export const createOrderSchema = z.object({
   type: z.enum(['SALE', 'PURCHASE']),
+  /**
+   * CONFIRMED (default) commits stock immediately. PENDING saves a draft/quote
+   * that has no stock effect until it is confirmed.
+   */
+  status: z.enum(['PENDING', 'CONFIRMED']).default('CONFIRMED'),
   supplierId: z.number().int().positive().optional(),
   /** SALE only. Preferred way to attach a customer. */
   customerId: z.number().int().positive().optional(),

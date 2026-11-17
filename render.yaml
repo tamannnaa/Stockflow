@@ -1,0 +1,40 @@
+# Render Blueprint for the stockflow API (https://render.com/docs/blueprint-spec).
+# The frontend is deployed separately on Vercel; the database lives on Neon.
+#
+# Values marked `sync: false` are prompted for in the Render dashboard — never commit them.
+services:
+  - type: web
+    name: stockflow-api
+    runtime: node
+    plan: free
+    rootDir: server
+    # --include=dev: NODE_ENV=production would otherwise skip TypeScript/Prisma CLI.
+    # `npm run build` runs `prisma generate` + tsc; migrations are applied on every deploy
+    # with `migrate deploy` (never resets data).
+    buildCommand: npm ci --include=dev && npm run build && npx prisma migrate deploy
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL # Neon connection string (with sslmode=require)
+        sync: false
+      - key: CLIENT_ORIGIN # your Vercel URL, e.g. https://stockflow.vercel.app (comma-separated for several)
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: ACCESS_TOKEN_TTL
+        value: 15m
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: "7"
+      # Proxies in front of the app: 2 when the frontend calls the API through the
+      # Vercel /api rewrite (Vercel → Render), 1 when the browser calls Render directly.
+      - key: TRUST_PROXY
+        value: "2"
+      - key: ALLOW_REGISTRATION
+        value: "false"

@@ -33,7 +33,9 @@ function describe(a: ActivityEntry) {
       return `Adjusted stock of ${s('sku')} by ${qty > 0 ? '+' : ''}${qty} (${s('reason').toLowerCase()})${m.note ? ` — “${s('note')}”` : ''}`;
     }
     case 'order.created':
-      return `Created ${s('type') === 'SALE' ? 'sale' : 'purchase order'} ${s('orderNumber')}`;
+      return `${s('status') === 'PENDING' ? 'Saved draft' : 'Created'} ${s('type') === 'SALE' ? 'sale' : 'purchase order'} ${s('orderNumber')}`;
+    case 'seed.demo_transactions':
+      return 'Loaded demo transactions';
     case 'order.status_changed':
       return `Changed ${s('orderNumber')} from ${s('from').toLowerCase()} to ${s('to').toLowerCase()}`;
     case 'supplier.created':

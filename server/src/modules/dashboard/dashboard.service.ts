@@ -44,7 +44,7 @@ export const dashboardService = {
       prisma.$queryRaw<{ salesOrders: bigint; salesRevenue: unknown }[]>`
         SELECT COUNT(*) AS "salesOrders", COALESCE(SUM(total_amount), 0) AS "salesRevenue"
         FROM orders
-        WHERE type = 'SALE' AND status <> 'CANCELLED'`,
+        WHERE type = 'SALE' AND status IN ('CONFIRMED', 'FULFILLED')`,
 
       prisma.$queryRaw<
         {
@@ -68,14 +68,14 @@ export const dashboardService = {
           COUNT(*) FILTER (WHERE type = 'PURCHASE' AND created_at >= now() - interval '30 days')                       AS "purchaseOrdersCurrent",
           COUNT(*) FILTER (WHERE type = 'PURCHASE' AND created_at <  now() - interval '30 days')                       AS "purchaseOrdersPrevious"
         FROM orders
-        WHERE status <> 'CANCELLED' AND created_at >= now() - interval '60 days'`,
+        WHERE status IN ('CONFIRMED', 'FULFILLED') AND created_at >= now() - interval '60 days'`,
 
       // Top 5 products by units sold (join orders + order_items).
       prisma.$queryRaw<{ id: number; name: string; sku: string; unitsSold: number; revenue: unknown }[]>`
         SELECT p.id, p.name, p.sku, SUM(oi.quantity)::int AS "unitsSold",
                SUM(oi.line_total) AS "revenue"
         FROM order_items oi
-        JOIN orders o   ON o.id = oi.order_id AND o.type = 'SALE' AND o.status <> 'CANCELLED'
+        JOIN orders o   ON o.id = oi.order_id AND o.type = 'SALE' AND o.status IN ('CONFIRMED', 'FULFILLED')
         JOIN products p ON p.id = oi.product_id
         GROUP BY p.id, p.name, p.sku
         ORDER BY "unitsSold" DESC
@@ -86,7 +86,7 @@ export const dashboardService = {
         SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
                SUM(total_amount) AS revenue
         FROM orders
-        WHERE type = 'SALE' AND status <> 'CANCELLED'
+        WHERE type = 'SALE' AND status IN ('CONFIRMED', 'FULFILLED')
           AND created_at >= now() - interval '14 days'
         GROUP BY 1 ORDER BY 1`,
 
@@ -98,7 +98,7 @@ export const dashboardService = {
                COUNT(o.id) FILTER (WHERE o.type = 'SALE')                          AS orders
         FROM generate_series(date_trunc('day', now()) - interval '29 days', date_trunc('day', now()), interval '1 day') AS d(day)
         LEFT JOIN orders o
-          ON date_trunc('day', o.created_at) = d.day AND o.status <> 'CANCELLED'
+          ON date_trunc('day', o.created_at) = d.day AND o.status IN ('CONFIRMED', 'FULFILLED')
         GROUP BY d.day
         ORDER BY d.day`,
 

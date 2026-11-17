@@ -98,13 +98,17 @@ export const ordersService = {
       const products = await tx.product.findMany({ where: { id: { in: productIds } } });
       const byId = new Map(products.map((p) => [p.id, p]));
 
+      // A PENDING order is a draft/quote: it is recorded but does not touch stock
+      // until it is confirmed (see updateStatus → applyStock).
+      const isDraft = input.status === 'PENDING';
+
       // Validate every line before mutating anything.
       for (const item of input.items) {
         const product = byId.get(item.productId);
         if (!product || !product.isActive) {
           throw HttpError.badRequest(`Product ${item.productId} not found`);
         }
-        if (input.type === 'SALE' && product.quantityInStock < item.quantity) {
+        if (!isDraft && input.type === 'SALE' && product.quantityInStock < item.quantity) {
           throw HttpError.conflict('INSUFFICIENT_STOCK', `Not enough stock for "${product.name}"`, {
             productId: product.id,
             available: product.quantityInStock,
@@ -125,7 +129,7 @@ export const ordersService = {
         data: {
           orderNumber: await this.nextOrderNumber(tx, input.type),
           type: input.type,
-          status: 'CONFIRMED',
+          status: isDraft ? 'PENDING' : 'CONFIRMED',
           supplierId: input.supplierId,
           customerId: customer.customerId,
           customerName: customer.customerName,
@@ -136,49 +140,63 @@ export const ordersService = {
         include: { items: true },
       });
 
-      // Apply stock changes + write the immutable ledger row for each item.
-      for (const item of input.items) {
-        const before = byId.get(item.productId)!;
-        if (input.type === 'SALE') {
-          const res = await tx.product.updateMany({
-            where: { id: item.productId, quantityInStock: { gte: item.quantity } },
-            data: { quantityInStock: { decrement: item.quantity } },
-          });
-          if (res.count === 0) {
-            // Stock changed between our read and this write (concurrent sale).
-            throw HttpError.conflict('INSUFFICIENT_STOCK', `Not enough stock for "${before.name}"`, {
-              productId: before.id,
-              requested: item.quantity,
-            });
-          }
-        } else {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { quantityInStock: { increment: item.quantity } },
-          });
-        }
-        await tx.stockMovement.create({
-          data: {
-            productId: item.productId,
-            changeQty: input.type === 'SALE' ? -item.quantity : item.quantity,
-            reason: input.type,
-            referenceOrderId: order.id,
-            createdById: userId,
-          },
-        });
-        if (input.type === 'SALE') await notifyIfCrossedReorder(tx, item.productId, before.quantityInStock);
-      }
+      if (!isDraft) await this.applyStock(tx, order, input.items, userId);
 
       await logActivity(tx, {
         userId,
         action: 'order.created',
         entity: 'order',
         entityId: order.id,
-        metadata: { orderNumber: order.orderNumber, type: order.type, totalAmount: totalAmount.toString() },
+        metadata: { orderNumber: order.orderNumber, type: order.type, status: order.status, totalAmount: totalAmount.toString() },
       });
 
       return order;
     });
+  },
+
+  /**
+   * Commits an order's stock effect: SALE decrements, PURCHASE increments, and
+   * each line writes an immutable ledger row. Sale decrements are conditional
+   * (`quantity >= n`) so concurrent sales can never drive stock negative.
+   * Runs when an order is created as CONFIRMED, or when a PENDING draft is confirmed.
+   */
+  async applyStock(
+    tx: Prisma.TransactionClient,
+    order: { id: number; type: CreateOrderInput['type'] },
+    items: { productId: number; quantity: number }[],
+    userId: number,
+  ) {
+    for (const item of items) {
+      const before = await tx.product.findUniqueOrThrow({ where: { id: item.productId } });
+      if (order.type === 'SALE') {
+        const res = await tx.product.updateMany({
+          where: { id: item.productId, quantityInStock: { gte: item.quantity } },
+          data: { quantityInStock: { decrement: item.quantity } },
+        });
+        if (res.count === 0) {
+          throw HttpError.conflict('INSUFFICIENT_STOCK', `Not enough stock for "${before.name}"`, {
+            productId: before.id,
+            available: before.quantityInStock,
+            requested: item.quantity,
+          });
+        }
+      } else {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { quantityInStock: { increment: item.quantity } },
+        });
+      }
+      await tx.stockMovement.create({
+        data: {
+          productId: item.productId,
+          changeQty: order.type === 'SALE' ? -item.quantity : item.quantity,
+          reason: order.type,
+          referenceOrderId: order.id,
+          createdById: userId,
+        },
+      });
+      if (order.type === 'SALE') await notifyIfCrossedReorder(tx, item.productId, before.quantityInStock);
+    }
   },
 
   async nextOrderNumber(tx: Prisma.TransactionClient, type: CreateOrderInput['type']) {
@@ -239,10 +257,13 @@ export const ordersService = {
   },
 
   /**
-   * Updates status with transition validation. Cancelling restores stock
-   * (reverses the movements) — again inside a transaction. Cancelling a
-   * PURCHASE whose stock has already been sold is rejected instead of driving
-   * stock negative.
+   * Updates status with transition validation, all inside a transaction:
+   *  - PENDING → CONFIRMED commits the stock effect (applyStock). A sale that
+   *    no longer has enough stock is rejected and stays PENDING.
+   *  - CONFIRMED → CANCELLED reverses the stock effect. Cancelling a PURCHASE
+   *    whose stock has already been sold is rejected instead of driving stock negative.
+   *  - PENDING → CANCELLED has no stock effect (nothing was ever applied).
+   *  - CONFIRMED → FULFILLED marks delivery; stock was already committed.
    */
   async updateStatus(id: number, next: OrderStatus, userId: number) {
     return prisma.$transaction(async (tx) => {
@@ -253,7 +274,12 @@ export const ordersService = {
         throw HttpError.conflict('INVALID_TRANSITION', `Cannot change status from ${order.status} to ${next}`);
       }
 
-      if (next === 'CANCELLED') {
+      if (order.status === 'PENDING' && next === 'CONFIRMED') {
+        await this.applyStock(tx, order, order.items, userId);
+      }
+
+      // Only reverse stock that was actually applied (i.e. the order was CONFIRMED).
+      if (next === 'CANCELLED' && order.status === 'CONFIRMED') {
         for (const item of order.items) {
           if (order.type === 'SALE') {
             await tx.product.update({

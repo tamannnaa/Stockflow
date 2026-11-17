@@ -26,12 +26,18 @@ function publicUser(user: User) {
   return rest;
 }
 
+// Valid bcrypt hash (cost 12) of a random string — used only for timing-safe login.
+const DUMMY_HASH = bcrypt.hashSync(`timing-${Math.random()}`, SALT_ROUNDS);
+
 export const authService = {
   /**
    * Registers a user. The FIRST user in an empty system becomes ADMIN so the
    * app is usable out of the box; everyone after is STAFF (admins promote later).
    */
   async register(input: RegisterInput) {
+    if (!env.allowRegistration) {
+      throw HttpError.forbidden('Public registration is disabled. Ask an administrator to create your account.');
+    }
     const existing = await prisma.user.findUnique({ where: { email: input.email } });
     if (existing) throw HttpError.conflict('EMAIL_TAKEN', 'Email is already registered');
 
@@ -47,8 +53,9 @@ export const authService = {
 
   async login(input: LoginInput) {
     const user = await prisma.user.findUnique({ where: { email: input.email } });
-    // Generic message + always compare to avoid user enumeration & timing leaks.
-    const ok = user ? await bcrypt.compare(input.password, user.passwordHash) : false;
+    // Generic message + always run a bcrypt compare (against a dummy hash when the
+    // email is unknown) so response time doesn't reveal which emails exist.
+    const ok = await bcrypt.compare(input.password, user?.passwordHash ?? DUMMY_HASH);
     if (!user || !ok) throw HttpError.unauthorized('Invalid email or password');
     if (!user.isActive) throw HttpError.forbidden('Account is deactivated');
     await logActivity(prisma, { userId: user.id, action: 'auth.login', entity: 'auth', entityId: user.id });

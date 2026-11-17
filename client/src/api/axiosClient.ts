@@ -1,6 +1,15 @@
 import axios from 'axios';
 
-const baseURL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000/api/v1';
+/**
+ * API base URL.
+ *  - VITE_API_URL wins when set (e.g. https://your-api.onrender.com/api/v1).
+ *  - Otherwise: the local API in development, and same-origin `/api/v1` in
+ *    production — which the Vercel rewrite in vercel.json proxies to Render,
+ *    keeping the refresh cookie first-party.
+ */
+const baseURL = (
+  import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:4000/api/v1' : '/api/v1')
+).replace(/\/+$/, '');
 
 export const api = axios.create({ baseURL, withCredentials: true });
 

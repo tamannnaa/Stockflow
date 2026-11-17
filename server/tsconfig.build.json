@@ -1,0 +1,6 @@
+{
+  // Production build: compiles src/ (including src/seed for `npm run seed:prod`)
+  // but never the test files.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "src/tests"]
+}

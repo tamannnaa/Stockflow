@@ -74,7 +74,7 @@ export function CustomerDrawer({
             <Stat label="Last order" value={c.stats.lastOrderAt ? relativeTime(c.stats.lastOrderAt) : '—'} />
           </div>
           <p className="-mt-3 text-xs text-ink-500">
-            {count(c.stats.unitsPurchased)} units purchased. Statistics exclude cancelled orders.
+            {count(c.stats.unitsPurchased)} units purchased. Statistics count confirmed and fulfilled orders only (not drafts or cancellations).
           </p>
 
           <ul className="space-y-2.5 rounded-xl border border-ink-200 p-4 text-sm">

@@ -7,8 +7,9 @@ import type { CustomerInput, ListCustomersQuery } from './customers.schema';
 type Db = typeof prisma | Prisma.TransactionClient;
 
 /**
- * Statistics only count SALE orders that are not CANCELLED. Cancelled orders stay
- * linked (history) but never inflate spend. Money stays NUMERIC in SQL and is
+ * Statistics only count committed SALE orders (CONFIRMED or FULFILLED): cancelled
+ * orders and PENDING drafts never inflate spend. Cancelled orders stay
+ * linked for history. Money stays NUMERIC in SQL and is
  * rounded to 2 dp before leaving the service.
  */
 const STATS_CTE = Prisma.sql`
@@ -19,14 +20,14 @@ const STATS_CTE = Prisma.sql`
            MAX(created_at)          AS last_order_at,
            MIN(created_at)          AS first_order_at
     FROM orders
-    WHERE type = 'SALE' AND status <> 'CANCELLED' AND customer_id IS NOT NULL
+    WHERE type = 'SALE' AND status IN ('CONFIRMED', 'FULFILLED') AND customer_id IS NOT NULL
     GROUP BY customer_id
   ),
   units AS (
     SELECT o.customer_id, SUM(oi.quantity)::int AS units
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
-    WHERE o.type = 'SALE' AND o.status <> 'CANCELLED' AND o.customer_id IS NOT NULL
+    WHERE o.type = 'SALE' AND o.status IN ('CONFIRMED', 'FULFILLED') AND o.customer_id IS NOT NULL
     GROUP BY o.customer_id
   ),
   all_orders AS (
@@ -167,7 +168,7 @@ export const customersService = {
       prisma.$queryRaw<{ orders: number; total: unknown }[]>`
         SELECT COUNT(*)::int AS orders, COALESCE(SUM(total_amount), 0) AS total
         FROM orders
-        WHERE type = 'SALE' AND status <> 'CANCELLED' AND customer_id IS NULL`,
+        WHERE type = 'SALE' AND status IN ('CONFIRMED', 'FULFILLED') AND customer_id IS NULL`,
     ]);
 
     return {

@@ -238,5 +238,8 @@ function confirmMessage(order: OrderDetail, action: Action | null) {
       ? 'Confirm the goods have been delivered to the customer. Fulfilled orders can no longer be cancelled.'
       : 'Confirm the goods have been received from the supplier. Fulfilled orders can no longer be cancelled.';
   }
-  return 'The order will move to Confirmed.';
+  // Confirming a PENDING draft commits its stock effect.
+  return order.type === 'SALE'
+    ? 'Stock for every item will be deducted now. If any item no longer has enough stock, the order stays pending.'
+    : 'Stock for every item will be added now.';
 }

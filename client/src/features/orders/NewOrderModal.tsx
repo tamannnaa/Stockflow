@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { customersApi, ordersApi, productsApi, suppliersApi } from '../../api/resources';
 import { apiError, getErrorMessage } from '../../lib/errors';
@@ -114,14 +114,18 @@ export function NewOrderModal({
     });
   };
 
-  const validateLines = () => {
+  // 'Save as draft' records a PENDING order: no stock effect until it is confirmed.
+  // A ref, not state: the submit handler runs in the same click, before a re-render.
+  const asDraft = useRef(false);
+
+  const validateLines = (draft: boolean) => {
     const errs: Record<number, string> = {};
     for (const l of lines) {
       const p = byId.get(l.productId);
       const q = Number(l.quantity);
       if (!p) errs[l.key] = 'Choose a product';
       else if (!Number.isInteger(q) || q < 1) errs[l.key] = 'Quantity must be a whole number ≥ 1';
-      else if (type === 'SALE' && q > p.quantityInStock) errs[l.key] = `Only ${p.quantityInStock} in stock`;
+      else if (!draft && type === 'SALE' && q > p.quantityInStock) errs[l.key] = `Only ${p.quantityInStock} in stock`;
     }
     setLineErrors(errs);
     return Object.keys(errs).length === 0;
@@ -130,19 +134,21 @@ export function NewOrderModal({
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!validateLines()) return;
+    const draft = asDraft.current;
+    if (!validateLines(draft)) return;
     setSaving(true);
     try {
       const res = await ordersApi.create({
         type,
+        status: draft ? 'PENDING' : 'CONFIRMED',
         // Sales: link the selected customer (blank = walk-in). Purchases never carry a customer.
         customerId: type === 'SALE' && customerId ? Number(customerId) : undefined,
         supplierId: type === 'PURCHASE' && supplierId ? Number(supplierId) : undefined,
         items: lines.map((l) => ({ productId: Number(l.productId), quantity: Number(l.quantity) })),
       });
       toast.success(
-        type === 'SALE' ? 'Sale recorded' : 'Purchase order created',
-        `${res.data.data.orderNumber} · ${money(res.data.data.totalAmount)} · stock updated`,
+        draft ? 'Draft saved' : type === 'SALE' ? 'Sale recorded' : 'Purchase order created',
+        `${res.data.data.orderNumber} · ${money(res.data.data.totalAmount)} · ${draft ? 'no stock change until confirmed' : 'stock updated'}`,
       );
       // The parent closes the modal as part of onCreated (it also navigates to the new order).
       onCreated(res.data.data);
@@ -183,7 +189,10 @@ export function NewOrderModal({
             <Button variant="secondary" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" form="order-form" loading={saving} disabled={!products}>
+            <Button type="submit" form="order-form" variant="secondary" disabled={!products || saving} onClick={() => (asDraft.current = true)}>
+              Save as draft
+            </Button>
+            <Button type="submit" form="order-form" loading={saving} disabled={!products} onClick={() => (asDraft.current = false)}>
               {type === 'SALE' ? 'Record sale' : 'Create purchase order'}
             </Button>
           </div>

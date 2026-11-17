@@ -115,7 +115,7 @@ export default function DashboardPage() {
         <Card className="lg:col-span-2">
           <CardHeader
             title="Sales vs purchases"
-            description="Daily order value, excluding cancelled orders"
+            description="Daily value of confirmed and fulfilled orders"
             action={
               data && (
                 <div className="flex gap-4 text-xs">

@@ -199,7 +199,7 @@ export default function CustomersPage() {
         title="Customers"
         description={
           data
-            ? `${count(data.pagination.total)} ${f.status === 'archived' ? 'archived' : f.status === 'all' ? '' : 'active'} customers. Spending excludes cancelled orders.`
+            ? `${count(data.pagination.total)} ${f.status === 'archived' ? 'archived' : f.status === 'all' ? '' : 'active'} customers. Spending counts confirmed and fulfilled orders only.`
             : 'People and businesses you sell to'
         }
         actions={
