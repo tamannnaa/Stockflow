@@ -1,4 +1,4 @@
-# stockflow — Inventory & Order Management
+# Stockflow — Inventory & Order Management
 
 A full-stack inventory and order management app for small retailers and warehouses. Track products and stock levels, record sales and purchase orders, manage customers and suppliers, and see live KPIs, all with role-based access and a complete audit trail of every stock change.
 
@@ -482,6 +482,4 @@ A free-tier setup that works well:
 - Real-time notifications (WebSockets).
 - A CI pipeline (GitHub Actions) running the integration suite against a temporary PostgreSQL database.
 
----
 
-*Built by Vishali A — Full Stack Developer (React · Node · TypeScript · PostgreSQL).*
