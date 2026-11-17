@@ -418,7 +418,24 @@ flowchart LR
 > The steps below set up your own deployment; the repository isn't deployed anywhere yet. All three providers have free tiers. Read the [free-tier notes](#free-tier-limitations) first.
 
 ### 1. Neon (PostgreSQL)
-1. Create a project at [neon.tech](https://neon.tech) and pick a region close to your Render region.
+
+**With the Neon CLI** (how this repository was set up):
+```bash
+npm install -g neonctl && neon login
+neon init -y --agent claude-code --org-id <org-id> --project-id <project-id> --no-config   # from the repo root
+```
+`neon init` links the project (`.neon/`) and writes `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) to the repo-root `.env.local`; both files are git-ignored.
+
+Then copy the **direct** URL into `server/.env.neon` (also git-ignored), as `DATABASE_URL="…"`, and apply the migrations:
+```bash
+cd server
+npm run neon:status      # shows pending migrations on Neon
+npm run neon:migrate     # prisma migrate deploy against Neon (non-destructive)
+```
+Local development keeps using the Docker database in `server/.env`. Only the `neon:*` scripts read `.env.neon`.
+
+**Or manually in the Neon Console:**
+1. Create a project at [neon.tech](https://neon.tech) and pick a region close to your Render region. This project's database is in `ap-southeast-1` (Singapore), so choose Render's Singapore region.
 2. Under **Connection Details**, copy the connection string. Use the **direct** (non-pooled) string; its host doesn't contain `-pooler`. Make sure it ends with `?sslmode=require`:
    ```
    postgresql://<user>:<password>@<endpoint>.<region>.aws.neon.tech/<db>?sslmode=require

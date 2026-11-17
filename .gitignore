@@ -27,3 +27,8 @@ server/prisma/*.db
 
 # local database backups
 db-backups/
+.neon
+
+# any other env files (e.g. server/.env.neon); templates stay tracked
+.env.*
+!.env.example
