@@ -22,6 +22,8 @@ import { ordersService } from '../modules/orders/orders.service';
 
 export const DEMO_PASSWORD_DEFAULT = 'Password123!';
 const SEED_MARKER = 'seed.demo_transactions';
+/** Per-step progress markers (internal; hidden from the audit-log API). */
+export const STEP_PREFIX = 'seed.step.';
 
 const USERS: { email: string; name: string; role: UserRole }[] = [
   { email: 'admin@stockflow.dev', name: 'Priya Sharma', role: 'ADMIN' },
@@ -285,37 +287,62 @@ export async function seedDemoData(opts: { password?: string; log?: (msg: string
     }
   }
 
-  // ── Demo transactions — once only ────────────────────────────────────────────
+  // ── Demo transactions — once only, resumable ────────────────────────────────
+  // Each step records progress markers so an interrupted run (network drop,
+  // closed shell) can be re-run without duplicating anything:
+  //   seed.step.<n>       written right after the step's order/adjustment commits
+  //                       (metadata.orderId lets a re-run finish its status change)
+  //   seed.step.<n>.done  written when the step is completely finished
   const alreadySeeded = await prisma.activityLog.findFirst({ where: { action: SEED_MARKER } });
   let ordersCreated = 0;
   if (!alreadySeeded) {
-    for (const step of STORY) {
+    for (const [index, step] of STORY.entries()) {
       const by = userIds[step.by]!;
       const label = step.kind === 'adjust' ? `${step.reason} ${step.sku}` : `${step.kind} (${step.kind === 'sale' ? step.customer ?? 'walk-in' : step.supplier})`;
+      const startedKey = `${STEP_PREFIX}${index}`;
+      const doneKey = `${startedKey}.done`;
+      if (await prisma.activityLog.findFirst({ where: { action: doneKey } })) {
+        log(`step ${index + 1} already done — skipped`);
+        continue;
+      }
+      const started = await prisma.activityLog.findFirst({ where: { action: startedKey } });
       try {
         await at(daysAgo(step.daysAgo), async () => {
           if (step.kind === 'adjust') {
-            await productsService.adjust(productIds[step.sku]!, { changeQty: step.changeQty, reason: step.reason, note: step.note }, by);
+            if (!started) {
+              await productsService.adjust(productIds[step.sku]!, { changeQty: step.changeQty, reason: step.reason, note: step.note }, by);
+              await logActivity(prisma, { userId: adminId, action: startedKey });
+            }
             return;
           }
-          const order = await ordersService.create(by, {
-            type: step.kind === 'sale' ? 'SALE' : 'PURCHASE',
-            status: step.status === 'PENDING' ? 'PENDING' : 'CONFIRMED',
-            supplierId: step.kind === 'purchase' ? supplierIds[step.supplier] : undefined,
-            customerId: step.kind === 'sale' && step.customer ? customerIds[step.customer] : undefined,
-            items: step.lines.map(([sku, quantity]) => ({ productId: productIds[sku]!, quantity })),
-          });
-          ordersCreated++;
+          // Resume: the order already exists from an interrupted run — don't create it again.
+          let orderId = (started?.metadata as { orderId?: number } | null)?.orderId;
+          if (!orderId) {
+            const order = await ordersService.create(by, {
+              type: step.kind === 'sale' ? 'SALE' : 'PURCHASE',
+              status: step.status === 'PENDING' ? 'PENDING' : 'CONFIRMED',
+              supplierId: step.kind === 'purchase' ? supplierIds[step.supplier] : undefined,
+              customerId: step.kind === 'sale' && step.customer ? customerIds[step.customer] : undefined,
+              items: step.lines.map(([sku, quantity]) => ({ productId: productIds[sku]!, quantity })),
+            });
+            orderId = order.id;
+            ordersCreated++;
+            await logActivity(prisma, { userId: adminId, action: startedKey, metadata: { orderId } });
+          }
           if (step.status === 'FULFILLED' || step.status === 'CANCELLED') {
-            await ordersService.updateStatus(order.id, step.status, by);
+            const current = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+            if (current.status !== step.status) await ordersService.updateStatus(orderId, step.status, by);
           }
         });
+        await logActivity(prisma, { userId: adminId, action: doneKey });
       } catch (err) {
         // On a database with different existing stock, a step may not be possible
         // (e.g. not enough stock). Skip it rather than corrupting anything.
         if (err instanceof HttpError) {
           skippedSteps.push(`${label}: ${err.message}`);
           log(`skipped ${label}: ${err.message}`);
+          // Not retried on the next run: the same data would fail the same way.
+          await logActivity(prisma, { userId: adminId, action: doneKey, metadata: { skipped: err.message } });
         } else {
           throw err;
         }

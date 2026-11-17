@@ -25,6 +25,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const q = req.query as unknown as ListQuery;
     const where: Prisma.ActivityLogWhereInput = {
+      // Internal seed progress markers are bookkeeping, not user activity.
+      NOT: { action: { startsWith: 'seed.step.' } },
       ...(q.entity ? { entity: q.entity } : {}),
       ...(q.userId ? { userId: q.userId } : {}),
     };

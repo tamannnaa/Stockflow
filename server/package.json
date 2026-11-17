@@ -14,6 +14,7 @@
     "prisma:status": "prisma migrate status",
     "neon:migrate": "node --env-file=.env.neon ./node_modules/prisma/build/index.js migrate deploy",
     "neon:status": "node --env-file=.env.neon ./node_modules/prisma/build/index.js migrate status",
+    "neon:seed": "node --env-file=.env.neon ./node_modules/tsx/dist/cli.mjs src/seed/run.ts",
     "seed": "tsx prisma/seed.ts",
     "seed:prod": "node dist/seed/run.js",
     "test": "vitest run",
