@@ -332,7 +332,8 @@ npm run dev                   # → http://localhost:5173
 | `npm run prisma:migrate` | Create and apply a migration after editing `schema.prisma` (development) |
 | `npm run prisma:deploy` | Apply existing migrations (any environment, never resets data) |
 | `npm run prisma:status` / `prisma:validate` | Migration status / schema validation |
-| `npm run seed` / `seed:prod` | Demo data from source / from the compiled build |
+| `npm run seed` / `seed:prod` | Demo data from source (local Docker) / from the compiled build (uses `DATABASE_URL`, e.g. on Render) |
+| `npm run neon:seed` | Demo data into Neon: loads `server/.env.neon`, verifies the target is the pinned Neon host + database over TLS, requires `SEED_DEMO_PASSWORD` |
 | `npm test` / `test:integration` | Unit tests / integration tests (see [Testing](#testing)) |
 | `npm run verify` | Validate schema, typecheck, unit tests, build |
 
@@ -375,7 +376,7 @@ All transactions go through the real order and stock services, so stock levels, 
 | Manager | `manager@stockflow.dev` | `Password123!` |
 | Staff | `staff@stockflow.dev` | `Password123!` |
 
-> ⚠️ These credentials are public. **Never use them in a real production system.** The seed refuses to run when `NODE_ENV=production` unless `SEED_DEMO_DATA=true` is set, and `SEED_DEMO_PASSWORD` lets you choose a different demo password.
+> ⚠️ `Password123!` is for **local development only**. Seeding a shared database (Neon or `NODE_ENV=production`) **requires** `SEED_DEMO_PASSWORD`: at least 12 characters, and the public password above is rejected. Production also requires `SEED_DEMO_DATA=true`. The seed never changes an existing user, so re-running it never resets a password. The deployed demo uses a private password.
 
 ---
 
@@ -469,6 +470,10 @@ Set the environment variables listed under [Backend (Render)](#backend-render).
 **Optional: seed the public demo**, once, from the Render **Shell**:
 ```bash
 SEED_DEMO_DATA=true SEED_DEMO_PASSWORD='<choose-a-demo-password>' npm run seed:prod
+```
+Render's free instances have no Shell. Seed Neon from your machine instead (from `server/`):
+```bash
+SEED_DEMO_PASSWORD='<choose-a-demo-password>' npm run neon:seed
 ```
 
 ### 3. Vercel (frontend)
